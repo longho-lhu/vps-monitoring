@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { connectDB } from '@/lib/db';
-import { User } from '@/lib/models/User';
+import { db } from '@/lib/db';
 import { hashPassword, signSession, setSessionCookie } from '@/lib/auth';
 import { querySetupComplete } from '@/lib/setup';
 
@@ -47,20 +46,22 @@ export async function POST(req: Request) {
     );
   }
 
-  await connectDB();
   const passwordHash = await hashPassword(parsed.data.password);
-  const user = await User.create({
-    username: parsed.data.username.toLowerCase(),
-    passwordHash,
-    role: 'admin',
-  });
+  const username = parsed.data.username.toLowerCase();
+
+  const stmt = db.prepare(`
+    INSERT INTO User (username, passwordHash, role)
+    VALUES (?, ?, 'admin')
+  `);
+  const result = stmt.run(username, passwordHash);
+  const userId = result.lastInsertRowid.toString();
 
   const token = await signSession({
-    sub: user._id.toString(),
-    username: user.username,
+    sub: userId,
+    username,
     role: 'admin',
   });
   await setSessionCookie(token);
 
-  return NextResponse.json({ ok: true, username: user.username });
+  return NextResponse.json({ ok: true, username });
 }

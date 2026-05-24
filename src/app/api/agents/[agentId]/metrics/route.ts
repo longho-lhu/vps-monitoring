@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
-import { Metric } from '@/lib/models/Metric';
+import { db } from '@/lib/db';
 import { getSessionFromCookies } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -23,14 +22,13 @@ export async function GET(req: Request, { params }: RouteContext) {
   else if (range === '24h') fromMs = now - 24 * 60 * 60 * 1000;
   else if (range === '7d') fromMs = now - 7 * 24 * 60 * 60 * 1000;
 
-  await connectDB();
-  const rows = await Metric.find({
-    agentId: params.agentId,
-    ts: { $gte: new Date(fromMs) },
-  })
-    .sort({ ts: 1 })
-    .limit(2000)
-    .lean();
+  const fromIso = new Date(fromMs).toISOString();
+  const rows = db.prepare(`
+    SELECT * FROM Metric
+    WHERE agentId = ? AND ts >= ?
+    ORDER BY ts ASC
+    LIMIT 2000
+  `).all(params.agentId, fromIso) as any[];
 
   const metrics = rows.map((m) => ({
     ts: m.ts,

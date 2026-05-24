@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getAppSettings } from '@/lib/app-settings';
-import { connectDB } from '@/lib/db';
+import { db } from '@/lib/db';
 import { env } from '@/lib/env';
-import { Agent } from '@/lib/models/Agent';
-import { Metric } from '@/lib/models/Metric';
 import { sendTelegramOverloadIfNeeded } from '@/lib/telegram-alerts';
+import { dbEventEmitter } from '@/lib/events';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,6 +28,16 @@ const schema = z.object({
   netTxBps: z.number().min(0).default(0),
   uptimeSeconds: z.number().min(0).default(0),
   processCount: z.number().int().min(0).default(0),
+  pm2: z.array(
+    z.object({
+      name: z.string(),
+      status: z.string(),
+      cpu: z.number().default(0),
+      memory: z.number().default(0),
+      restarts: z.number().default(0),
+      uptime: z.number().default(0),
+    })
+  ).optional().default([]),
 });
 
 export async function POST(req: Request) {
@@ -38,45 +47,70 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
   }
 
-  await connectDB();
-
-  const agent = await Agent.findOne({
-    agentId: parsed.data.agentId,
-    token: parsed.data.token,
-  });
+  const agent = db.prepare('SELECT * FROM Agent WHERE agentId = ? AND token = ?').get(
+    parsed.data.agentId,
+    parsed.data.token
+  ) as any;
 
   if (!agent) {
     return NextResponse.json({ error: 'Unknown agent or invalid token' }, { status: 401 });
   }
 
-  const now = new Date();
-  agent.lastSeenAt = now;
-  await agent.save();
+  const nowStr = new Date().toISOString();
 
-  await Metric.create({
-    agentId: agent.agentId,
-    ts: now,
-    cpuPercent: parsed.data.cpuPercent,
-    loadAvg1: parsed.data.loadAvg1,
-    loadAvg5: parsed.data.loadAvg5,
-    loadAvg15: parsed.data.loadAvg15,
-    memUsedBytes: parsed.data.memUsedBytes,
-    memTotalBytes: parsed.data.memTotalBytes,
-    swapUsedBytes: parsed.data.swapUsedBytes,
-    swapTotalBytes: parsed.data.swapTotalBytes,
-    diskUsedBytes: parsed.data.diskUsedBytes,
-    diskTotalBytes: parsed.data.diskTotalBytes,
-    netRxBytes: parsed.data.netRxBytes,
-    netTxBytes: parsed.data.netTxBytes,
-    netRxBps: parsed.data.netRxBps,
-    netTxBps: parsed.data.netTxBps,
-    uptimeSeconds: parsed.data.uptimeSeconds,
-    processCount: parsed.data.processCount,
-  });
+  // Update lastSeenAt and pm2 telemetry
+  db.prepare('UPDATE Agent SET lastSeenAt = ?, pm2 = ? WHERE agentId = ?').run(
+    nowStr,
+    JSON.stringify(parsed.data.pm2),
+    agent.agentId
+  );
+
+  // Insert Metric record
+  db.prepare(`
+    INSERT INTO Metric (
+      agentId, ts, cpuPercent, loadAvg1, loadAvg5, loadAvg15,
+      memUsedBytes, memTotalBytes, swapUsedBytes, swapTotalBytes,
+      diskUsedBytes, diskTotalBytes, netRxBytes, netTxBytes,
+      netRxBps, netTxBps, uptimeSeconds, processCount
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    agent.agentId,
+    nowStr,
+    parsed.data.cpuPercent,
+    parsed.data.loadAvg1,
+    parsed.data.loadAvg5,
+    parsed.data.loadAvg15,
+    parsed.data.memUsedBytes,
+    parsed.data.memTotalBytes,
+    parsed.data.swapUsedBytes,
+    parsed.data.swapTotalBytes,
+    parsed.data.diskUsedBytes,
+    parsed.data.diskTotalBytes,
+    parsed.data.netRxBytes,
+    parsed.data.netTxBytes,
+    parsed.data.netRxBps,
+    parsed.data.netTxBps,
+    parsed.data.uptimeSeconds,
+    parsed.data.processCount
+  );
+
+  // Emit event for real-time pushing
+  dbEventEmitter.emit('metric_update', { type: 'metric_update', agentId: agent.agentId });
 
   const appSettings = await getAppSettings();
+  
+  // Create an agent object compatible with telegram alert evaluation
+  const agentForAlert = {
+    agentId: agent.agentId,
+    hostname: agent.hostname,
+    label: agent.label,
+    publicIp: agent.publicIp,
+    lastTelegramAlertAt: agent.lastTelegramAlertAt,
+  };
+
   const sent = await sendTelegramOverloadIfNeeded(
-    agent,
+    agentForAlert,
     {
       cpuPercent: parsed.data.cpuPercent,
       memUsedBytes: parsed.data.memUsedBytes,
@@ -87,9 +121,12 @@ export async function POST(req: Request) {
     appSettings,
     env.APP_URL
   );
+
   if (sent) {
-    agent.lastTelegramAlertAt = now;
-    await agent.save();
+    db.prepare('UPDATE Agent SET lastTelegramAlertAt = ? WHERE agentId = ?').run(
+      nowStr,
+      agent.agentId
+    );
   }
 
   return NextResponse.json({ ok: true });

@@ -66,14 +66,14 @@ export function AddServerClient({ appUrl }: { appUrl: string }) {
             <label className="label">Reporting interval (seconds)</label>
             <input
               type="number"
-              min={5}
+              min={1}
               max={300}
               value={interval}
-              onChange={(e) => setInterval(Math.max(5, Math.min(300, Number(e.target.value))))}
+              onChange={(e) => setInterval(Math.max(1, Math.min(300, Number(e.target.value))))}
               className="input"
             />
             <p className="mt-2 text-xs text-ink-soft">
-              How often the agent posts metrics. 15s is a balanced default.
+              How often the agent posts metrics. 15s is a balanced default (min 1s).
             </p>
           </div>
           <div className="rounded-xl border border-border bg-bg-soft/50 p-4">

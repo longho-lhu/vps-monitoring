@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { connectDB } from '@/lib/db';
-import { User } from '@/lib/models/User';
+import { db } from '@/lib/db';
 import { verifyPassword, signSession, setSessionCookie } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -18,8 +17,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
   }
 
-  await connectDB();
-  const user = await User.findOne({ username: parsed.data.username.toLowerCase() });
+  const user = db.prepare('SELECT * FROM User WHERE username = ?').get(parsed.data.username.toLowerCase()) as any;
   if (!user) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
   }
@@ -30,7 +28,7 @@ export async function POST(req: Request) {
   }
 
   const token = await signSession({
-    sub: user._id.toString(),
+    sub: user.id.toString(),
     username: user.username,
     role: 'admin',
   });

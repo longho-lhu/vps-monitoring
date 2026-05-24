@@ -1,5 +1,4 @@
-import { connectDB } from '@/lib/db';
-import { AppSettings, type IAppSettings } from '@/lib/models/AppSettings';
+import { db } from '@/lib/db';
 import {
   sanitizeTelegramBotToken,
   sanitizeTelegramChatId,
@@ -19,7 +18,7 @@ export type ResolvedAppSettings = {
 const CACHE_TTL_MS = 5000;
 let cache: { expiresAt: number; value: ResolvedAppSettings } | null = null;
 
-function toResolved(doc: IAppSettings): ResolvedAppSettings {
+function toResolved(doc: any): ResolvedAppSettings {
   const rawT = doc.telegramBotToken ?? '';
   const rawC = doc.telegramChatId ?? '';
   const token = rawT ? sanitizeTelegramBotToken(rawT) : '';
@@ -34,19 +33,16 @@ function toResolved(doc: IAppSettings): ResolvedAppSettings {
   };
 }
 
-async function loadDoc() {
-  await connectDB();
-  let doc = await AppSettings.findOne({ __singleton: 1 });
+function loadDoc() {
+  let doc = db.prepare('SELECT * FROM AppSettings WHERE singleton = 1').get() as any;
   if (doc) return doc;
   try {
-    doc = await AppSettings.create({ __singleton: 1 });
+    db.prepare('INSERT OR IGNORE INTO AppSettings (singleton) VALUES (1)').run();
+    doc = db.prepare('SELECT * FROM AppSettings WHERE singleton = 1').get() as any;
     return doc;
   } catch (e: unknown) {
-    const code = typeof e === 'object' && e !== null && 'code' in e ? (e as { code: number }).code : 0;
-    if (code === 11_000) {
-      const again = await AppSettings.findOne({ __singleton: 1 });
-      if (again) return again;
-    }
+    const again = db.prepare('SELECT * FROM AppSettings WHERE singleton = 1').get() as any;
+    if (again) return again;
     throw e;
   }
 }
@@ -60,7 +56,7 @@ export async function getAppSettings(): Promise<ResolvedAppSettings> {
   if (cache && now < cache.expiresAt) {
     return cache.value;
   }
-  const doc = await loadDoc();
+  const doc = loadDoc();
   const value = toResolved(doc);
   cache = { expiresAt: now + CACHE_TTL_MS, value };
   return value;
@@ -76,7 +72,7 @@ export type PublicAlertSettings = {
 };
 
 export async function getPublicAlertSettings(): Promise<PublicAlertSettings> {
-  const doc = await loadDoc();
+  const doc = loadDoc();
   const r = toResolved(doc);
   return {
     botTokenConfigured: Boolean(r.telegramBotToken),
@@ -90,7 +86,6 @@ export async function getPublicAlertSettings(): Promise<PublicAlertSettings> {
 
 export type UpdateAppSettingsInput = {
   telegramBotToken?: string;
-  /** When true, clears stored bot token (ignored if a new non-empty token is sent). */
   clearTelegramBotToken?: boolean;
   telegramChatId?: string;
   alertCpuPercent?: number;
@@ -100,8 +95,9 @@ export type UpdateAppSettingsInput = {
 };
 
 export async function updateAppSettings(input: UpdateAppSettingsInput): Promise<PublicAlertSettings> {
-  const doc = await loadDoc();
+  const doc = loadDoc();
 
+  let telegramBotToken = doc.telegramBotToken;
   const newToken = input.telegramBotToken?.trim();
   if (newToken) {
     const clean = sanitizeTelegramBotToken(newToken);
@@ -114,29 +110,57 @@ export async function updateAppSettings(input: UpdateAppSettingsInput): Promise<
     if (!me.ok) {
       throw new TelegramTokenRejectedError(me.description);
     }
-    doc.telegramBotToken = clean;
+    telegramBotToken = clean;
   } else if (input.clearTelegramBotToken) {
-    doc.telegramBotToken = '';
+    telegramBotToken = '';
   }
 
+  let telegramChatId = doc.telegramChatId;
   if (input.telegramChatId !== undefined) {
-    doc.telegramChatId = sanitizeTelegramChatId(input.telegramChatId);
+    telegramChatId = sanitizeTelegramChatId(input.telegramChatId);
   }
+
+  let alertCpuPercent = doc.alertCpuPercent;
   if (input.alertCpuPercent !== undefined) {
-    doc.alertCpuPercent = Math.max(1, Math.min(100, Math.round(input.alertCpuPercent)));
+    alertCpuPercent = Math.max(1, Math.min(100, Math.round(input.alertCpuPercent)));
   }
+
+  let alertRamPercent = doc.alertRamPercent;
   if (input.alertRamPercent !== undefined) {
-    doc.alertRamPercent = Math.max(1, Math.min(100, Math.round(input.alertRamPercent)));
+    alertRamPercent = Math.max(1, Math.min(100, Math.round(input.alertRamPercent)));
   }
+
+  let alertDiskPercent = doc.alertDiskPercent;
   if (input.alertDiskPercent !== undefined) {
-    doc.alertDiskPercent = Math.max(1, Math.min(100, Math.round(input.alertDiskPercent)));
+    alertDiskPercent = Math.max(1, Math.min(100, Math.round(input.alertDiskPercent)));
   }
+
+  let telegramCooldownSeconds = doc.telegramCooldownSeconds;
   if (input.telegramCooldownSeconds !== undefined) {
     const c = Math.round(input.telegramCooldownSeconds);
-    doc.telegramCooldownSeconds = Math.max(60, Math.min(86_400, c));
+    telegramCooldownSeconds = Math.max(60, Math.min(86_400, c));
   }
 
-  await doc.save();
+  // Update in SQLite
+  db.prepare(`
+    UPDATE AppSettings
+    SET telegramBotToken = ?,
+        telegramChatId = ?,
+        alertCpuPercent = ?,
+        alertRamPercent = ?,
+        alertDiskPercent = ?,
+        telegramCooldownSeconds = ?,
+        updatedAt = CURRENT_TIMESTAMP
+    WHERE singleton = 1
+  `).run(
+    telegramBotToken,
+    telegramChatId,
+    alertCpuPercent,
+    alertRamPercent,
+    alertDiskPercent,
+    telegramCooldownSeconds
+  );
+
   invalidateAppSettingsCache();
   return getPublicAlertSettings();
 }

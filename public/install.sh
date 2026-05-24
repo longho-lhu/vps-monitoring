@@ -237,6 +237,21 @@ while true; do
   # Process count
   PROC_COUNT=$(ls -1 /proc 2>/dev/null | grep -c '^[0-9][0-9]*$')
 
+  # PM2 Processes
+  PM2_DATA="[]"
+  if command -v pm2 >/dev/null 2>&1; then
+    PM2_USER=$(ps aux | grep -v grep | grep -E "PM2 v[0-9]" | awk '{print $1}' | head -n 1)
+    if [ -n "$PM2_USER" ]; then
+      PM2_RAW=$(sudo -u "$PM2_USER" env PATH="$PATH" pm2 jlist 2>/dev/null)
+    else
+      PM2_RAW=$(pm2 jlist 2>/dev/null)
+    fi
+    if [ -n "$PM2_RAW" ]; then
+      PM2_DATA=$(echo "$PM2_RAW" | jq -c '[.[] | {name: .name, status: .pm2_env.status, cpu: (.monit.cpu // 0), memory: (.monit.memory // 0), restarts: (.pm2_env.restart_time // 0), uptime: (if .pm2_env.pm_uptime then ((now * 1000 - .pm2_env.pm_uptime) / 1000 | floor) else 0 end)}]')
+    fi
+    [ -z "$PM2_DATA" ] && PM2_DATA="[]"
+  fi
+
   PAYLOAD=$(jq -n \
     --arg agentId "$AGENT_ID" \
     --arg token   "$AGENT_TOKEN" \
@@ -256,7 +271,8 @@ while true; do
     --argjson netTxBps   "$TX_BPS" \
     --argjson uptimeSeconds "$UPTIME" \
     --argjson processCount  "$PROC_COUNT" \
-    '{agentId:$agentId, token:$token, cpuPercent:$cpuPercent, loadAvg1:$loadAvg1, loadAvg5:$loadAvg5, loadAvg15:$loadAvg15, memUsedBytes:$memUsedBytes, memTotalBytes:$memTotalBytes, swapUsedBytes:$swapUsedBytes, swapTotalBytes:$swapTotalBytes, diskUsedBytes:$diskUsedBytes, diskTotalBytes:$diskTotalBytes, netRxBytes:$netRxBytes, netTxBytes:$netTxBytes, netRxBps:$netRxBps, netTxBps:$netTxBps, uptimeSeconds:$uptimeSeconds, processCount:$processCount}')
+    --argjson pm2           "$PM2_DATA" \
+    '{agentId:$agentId, token:$token, cpuPercent:$cpuPercent, loadAvg1:$loadAvg1, loadAvg5:$loadAvg5, loadAvg15:$loadAvg15, memUsedBytes:$memUsedBytes, memTotalBytes:$memTotalBytes, swapUsedBytes:$swapUsedBytes, swapTotalBytes:$swapTotalBytes, diskUsedBytes:$diskUsedBytes, diskTotalBytes:$diskTotalBytes, netRxBytes:$netRxBytes, netTxBytes:$netTxBytes, netRxBps:$netRxBps, netTxBps:$netTxBps, uptimeSeconds:$uptimeSeconds, processCount:$processCount, pm2:$pm2}')
 
   curl -fsS --max-time 10 -X POST "$SERVER_URL/api/agents/heartbeat" \
     -H 'Content-Type: application/json' \

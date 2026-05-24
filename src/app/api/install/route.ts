@@ -22,7 +22,7 @@ export async function GET(req: Request) {
 
   const rendered = template
     .replace(/__SERVER_URL__/g, baseUrl)
-    .replace(/__INTERVAL__/g, String(Math.max(5, Number(interval) || 15)));
+    .replace(/__INTERVAL__/g, String(Math.max(1, Number(interval) || 15)));
 
   return new NextResponse(rendered, {
     headers: {

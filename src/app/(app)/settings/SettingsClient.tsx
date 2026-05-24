@@ -57,6 +57,21 @@ export function SettingsClient({
   const [savingAlerts, setSavingAlerts] = useState(false);
   const [testing, setTesting] = useState(false);
 
+  const [uiInterval, setUiInterval] = useState(30000);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('vps_mon_ui_refresh');
+    if (saved !== null) {
+      setUiInterval(Number(saved));
+    }
+  }, []);
+
+  const changeUiInterval = (val: number) => {
+    setUiInterval(val);
+    localStorage.setItem('vps_mon_ui_refresh', String(val));
+    toast.success('Đã cập nhật tốc độ làm mới giao diện');
+  };
+
   useEffect(() => {
     if (!alertData || alertsHydrated) return;
     setChatId(alertData.telegramChatId);
@@ -167,14 +182,34 @@ export function SettingsClient({
       <div className="card card-pad">
         <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
           <Monitor className="h-4 w-4 text-ink-muted" />
-          Appearance
+          Appearance & Performance
         </h2>
         <p className="mt-1 text-sm text-ink-muted">
-          Light or dark interface. Your choice is saved in this browser.
+          Configure theme and fallback refresh rates for this browser.
         </p>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <span className="text-sm text-ink-soft">Theme</span>
-          <ThemeToggle className="border border-border bg-bg-muted" />
+        <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <div>
+            <span className="text-xs font-semibold text-ink uppercase tracking-wider block mb-2">Theme</span>
+            <ThemeToggle className="border border-border bg-bg-muted" />
+          </div>
+          <div>
+            <label className="label">UI Refresh Rate (Fallback / Polling)</label>
+            <select
+              value={uiInterval}
+              onChange={(e) => changeUiInterval(Number(e.target.value))}
+              className="select input"
+            >
+              <option value={1000}>1 second</option>
+              <option value={2000}>2 seconds</option>
+              <option value={5000}>5 seconds</option>
+              <option value={10000}>10 seconds</option>
+              <option value={30000}>30 seconds (Default)</option>
+              <option value={0}>Disabled (SSE only)</option>
+            </select>
+            <p className="mt-2 text-xs text-ink-soft">
+              Controls SWR background revalidation frequency (min 1s). Real-time events will still push immediately.
+            </p>
+          </div>
         </div>
       </div>
 

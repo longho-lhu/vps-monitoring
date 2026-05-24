@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { connectDB } from '@/lib/db';
-import { Agent } from '@/lib/models/Agent';
+import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,27 +31,44 @@ export async function POST(req: Request) {
     );
   }
 
-  await connectDB();
+  let agentId = parsed.data.agentId;
+  let agent: any = null;
 
-  let agent = parsed.data.agentId
-    ? await Agent.findOne({ agentId: parsed.data.agentId })
-    : null;
+  if (agentId) {
+    agent = db.prepare('SELECT * FROM Agent WHERE agentId = ?').get(agentId);
+  }
 
   if (agent) {
-    Object.assign(agent, {
-      hostname: parsed.data.hostname,
-      os: parsed.data.os,
-      osVersion: parsed.data.osVersion,
-      kernel: parsed.data.kernel,
-      arch: parsed.data.arch,
-      cpuModel: parsed.data.cpuModel,
-      cpuCores: parsed.data.cpuCores,
-      totalMemoryBytes: parsed.data.totalMemoryBytes,
-      totalDiskBytes: parsed.data.totalDiskBytes,
-      publicIp: parsed.data.publicIp,
-      privateIp: parsed.data.privateIp,
-    });
-    await agent.save();
+    db.prepare(`
+      UPDATE Agent
+      SET hostname = ?,
+          os = ?,
+          osVersion = ?,
+          kernel = ?,
+          arch = ?,
+          cpuModel = ?,
+          cpuCores = ?,
+          totalMemoryBytes = ?,
+          totalDiskBytes = ?,
+          publicIp = ?,
+          privateIp = ?,
+          updatedAt = CURRENT_TIMESTAMP
+      WHERE agentId = ?
+    `).run(
+      parsed.data.hostname,
+      parsed.data.os,
+      parsed.data.osVersion,
+      parsed.data.kernel,
+      parsed.data.arch,
+      parsed.data.cpuModel,
+      parsed.data.cpuCores,
+      parsed.data.totalMemoryBytes,
+      parsed.data.totalDiskBytes,
+      parsed.data.publicIp || null,
+      parsed.data.privateIp || null,
+      agentId
+    );
+
     return NextResponse.json({
       ok: true,
       agentId: agent.agentId,
@@ -61,25 +77,30 @@ export async function POST(req: Request) {
     });
   }
 
-  const agentId = parsed.data.agentId ?? `vps_${nanoid(16)}`;
+  const newAgentId = agentId ?? `vps_${nanoid(16)}`;
   const token = `tok_${nanoid(40)}`;
 
-  agent = await Agent.create({
-    agentId,
+  db.prepare(`
+    INSERT INTO Agent (
+      agentId, token, hostname, os, osVersion, kernel, arch,
+      cpuModel, cpuCores, totalMemoryBytes, totalDiskBytes, publicIp, privateIp
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    newAgentId,
     token,
-    hostname: parsed.data.hostname,
-    os: parsed.data.os,
-    osVersion: parsed.data.osVersion,
-    kernel: parsed.data.kernel,
-    arch: parsed.data.arch,
-    cpuModel: parsed.data.cpuModel,
-    cpuCores: parsed.data.cpuCores,
-    totalMemoryBytes: parsed.data.totalMemoryBytes,
-    totalDiskBytes: parsed.data.totalDiskBytes,
-    publicIp: parsed.data.publicIp,
-    privateIp: parsed.data.privateIp,
-    registeredAt: new Date(),
-  });
+    parsed.data.hostname,
+    parsed.data.os,
+    parsed.data.osVersion,
+    parsed.data.kernel,
+    parsed.data.arch,
+    parsed.data.cpuModel,
+    parsed.data.cpuCores,
+    parsed.data.totalMemoryBytes,
+    parsed.data.totalDiskBytes,
+    parsed.data.publicIp || null,
+    parsed.data.privateIp || null
+  );
 
-  return NextResponse.json({ ok: true, agentId: agent.agentId, token: agent.token, reused: false });
+  return NextResponse.json({ ok: true, agentId: newAgentId, token, reused: false });
 }

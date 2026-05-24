@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { connectDB } from '@/lib/db';
-import { User } from '@/lib/models/User';
+import { db } from '@/lib/db';
 import { getSessionFromCookies, hashPassword, verifyPassword } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -19,15 +18,14 @@ export async function POST(req: Request) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
-  await connectDB();
-  const user = await User.findById(session.sub);
+  const user = db.prepare('SELECT * FROM User WHERE id = ?').get(session.sub) as any;
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
   const ok = await verifyPassword(parsed.data.oldPassword, user.passwordHash);
   if (!ok) return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 });
 
-  user.passwordHash = await hashPassword(parsed.data.newPassword);
-  await user.save();
+  const newHash = await hashPassword(parsed.data.newPassword);
+  db.prepare('UPDATE User SET passwordHash = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').run(newHash, session.sub);
 
   return NextResponse.json({ ok: true });
 }

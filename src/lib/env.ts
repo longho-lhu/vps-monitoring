@@ -13,8 +13,8 @@ function resolveJwtSecret(): string {
 }
 
 export const env = {
-  get MONGODB_URI(): string {
-    return process.env.MONGODB_URI ?? 'mongodb://localhost:27017/vps-monitoring';
+  get SQLITE_DB_PATH(): string {
+    return process.env.SQLITE_DB_PATH ?? 'vps-monitoring.db';
   },
   get JWT_SECRET(): string {
     return resolveJwtSecret();

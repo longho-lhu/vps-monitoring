@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { connectDB } from '@/lib/db';
-import { Agent } from '@/lib/models/Agent';
-import { Metric } from '@/lib/models/Metric';
+import { db } from '@/lib/db';
 import { getSessionFromCookies } from '@/lib/auth';
 import { env } from '@/lib/env';
 
@@ -17,15 +15,28 @@ export async function GET(_req: Request, { params }: RouteContext) {
   const session = await getSessionFromCookies();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  await connectDB();
-  const agent = await Agent.findOne({ agentId: params.agentId }).lean();
+  const agent = db.prepare('SELECT * FROM Agent WHERE agentId = ?').get(params.agentId) as any;
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const latest = await Metric.findOne({ agentId: params.agentId }).sort({ ts: -1 }).lean();
+  const latest = db.prepare('SELECT * FROM Metric WHERE agentId = ? ORDER BY ts DESC LIMIT 1').get(params.agentId) as any;
 
   const offlineMs = env.AGENT_OFFLINE_AFTER_SECONDS * 1000;
   const online =
     agent.lastSeenAt && Date.now() - new Date(agent.lastSeenAt).getTime() <= offlineMs;
+
+  let parsedTags: string[] = [];
+  try {
+    parsedTags = JSON.parse(agent.tags || '[]');
+  } catch {
+    parsedTags = [];
+  }
+
+  let parsedPm2: any[] = [];
+  try {
+    parsedPm2 = JSON.parse(agent.pm2 || '[]');
+  } catch {
+    parsedPm2 = [];
+  }
 
   return NextResponse.json({
     agent: {
@@ -42,7 +53,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
       totalDiskBytes: agent.totalDiskBytes,
       publicIp: agent.publicIp,
       privateIp: agent.privateIp,
-      tags: agent.tags,
+      tags: parsedTags,
+      pm2: parsedPm2,
       online,
       lastSeenAt: agent.lastSeenAt,
       registeredAt: agent.registeredAt,
@@ -66,13 +78,30 @@ export async function PATCH(req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
   }
 
-  await connectDB();
-  const agent = await Agent.findOneAndUpdate(
-    { agentId: params.agentId },
-    { $set: parsed.data },
-    { new: true }
-  );
+  const agent = db.prepare('SELECT * FROM Agent WHERE agentId = ?').get(params.agentId) as any;
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const updates: string[] = [];
+  const paramsList: any[] = [];
+
+  if (parsed.data.label !== undefined) {
+    updates.push('label = ?');
+    paramsList.push(parsed.data.label);
+  }
+  if (parsed.data.tags !== undefined) {
+    updates.push('tags = ?');
+    paramsList.push(JSON.stringify(parsed.data.tags));
+  }
+
+  if (updates.length > 0) {
+    updates.push('updatedAt = CURRENT_TIMESTAMP');
+    paramsList.push(params.agentId);
+    db.prepare(`
+      UPDATE Agent
+      SET ${updates.join(', ')}
+      WHERE agentId = ?
+    `).run(...paramsList);
+  }
 
   return NextResponse.json({ ok: true });
 }
@@ -81,9 +110,9 @@ export async function DELETE(_req: Request, { params }: RouteContext) {
   const session = await getSessionFromCookies();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  await connectDB();
-  await Agent.deleteOne({ agentId: params.agentId });
-  await Metric.deleteMany({ agentId: params.agentId });
+  // Delete Agent and their metrics explicitly (even though CASCADE is set up)
+  db.prepare('DELETE FROM Agent WHERE agentId = ?').run(params.agentId);
+  db.prepare('DELETE FROM Metric WHERE agentId = ?').run(params.agentId);
 
   return NextResponse.json({ ok: true });
 }

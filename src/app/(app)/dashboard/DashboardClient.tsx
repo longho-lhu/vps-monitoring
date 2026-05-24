@@ -1,7 +1,9 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
+import { useRealtimeEvents } from '@/lib/useRealtimeEvents';
 import {
   Activity,
   Cpu,
@@ -51,10 +53,20 @@ interface AgentSummary {
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function DashboardClient() {
+  useRealtimeEvents();
+  const [refreshInterval, setRefreshInterval] = useState(30000);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('vps_mon_ui_refresh');
+    if (saved !== null) {
+      setRefreshInterval(Number(saved));
+    }
+  }, []);
+
   const { data, isLoading, mutate } = useSWR<{ agents: AgentSummary[] }>(
     '/api/agents',
     fetcher,
-    { refreshInterval: 5000 }
+    { refreshInterval: refreshInterval === 0 ? undefined : refreshInterval }
   );
 
   const agents = data?.agents ?? [];

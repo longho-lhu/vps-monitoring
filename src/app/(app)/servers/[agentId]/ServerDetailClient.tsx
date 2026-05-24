@@ -2,8 +2,9 @@
 
 import useSWR from 'swr';
 import Link from 'next/link';
+import { useRealtimeEvents } from '@/lib/useRealtimeEvents';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ArrowLeft,
   Cpu,
@@ -59,6 +60,14 @@ interface AgentDetail {
     loadAvg5: number;
     loadAvg15: number;
   } | null;
+  pm2?: {
+    name: string;
+    status: string;
+    cpu: number;
+    memory: number;
+    restarts: number;
+    uptime: number;
+  }[];
 }
 
 interface MetricPoint {
@@ -88,15 +97,25 @@ export function ServerDetailClient({ agentId }: { agentId: string }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  useRealtimeEvents(agentId);
+  const [refreshInterval, setRefreshInterval] = useState(30000);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('vps_mon_ui_refresh');
+    if (saved !== null) {
+      setRefreshInterval(Number(saved));
+    }
+  }, []);
+
   const { data, isLoading, mutate } = useSWR<{ agent: AgentDetail }>(
     `/api/agents/${agentId}`,
     fetcher,
-    { refreshInterval: 5000 }
+    { refreshInterval: refreshInterval === 0 ? undefined : refreshInterval }
   );
   const { data: metricsData, isLoading: loadingMetrics } = useSWR<{ metrics: MetricPoint[] }>(
     `/api/agents/${agentId}/metrics?range=${range}`,
     fetcher,
-    { refreshInterval: 10000 }
+    { refreshInterval: refreshInterval === 0 ? undefined : refreshInterval }
   );
 
   const agent = data?.agent;
@@ -392,6 +411,68 @@ export function ServerDetailClient({ agentId }: { agentId: string }) {
           </div>
         </div>
       </div>
+
+      {agent.pm2 && agent.pm2.length > 0 && (
+        <div className="card card-pad space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-ink">PM2 Processes</h3>
+              <p className="text-xs text-ink-muted">Managed active applications on this VPS</p>
+            </div>
+            <span className="chip chip-success text-[10px]">
+              {agent.pm2.filter((p: any) => p.status === 'online').length} / {agent.pm2.length} online
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="border-b border-border bg-bg-soft/40 text-[10px] uppercase tracking-wider text-ink-soft">
+                <tr>
+                  <th className="px-4 py-2.5 font-semibold">App Name</th>
+                  <th className="px-4 py-2.5 font-semibold">Status</th>
+                  <th className="px-4 py-2.5 font-semibold">CPU</th>
+                  <th className="px-4 py-2.5 font-semibold">Memory</th>
+                  <th className="px-4 py-2.5 font-semibold">Restarts</th>
+                  <th className="px-4 py-2.5 font-semibold">Uptime</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {agent.pm2.map((p: any) => {
+                  const statusClass =
+                    p.status === 'online'
+                      ? 'text-success bg-success/10 border-success/20'
+                      : p.status === 'stopped'
+                      ? 'text-ink-soft bg-bg-muted border-border'
+                      : 'text-danger bg-danger/10 border-danger/20';
+
+                  const restartClass =
+                    p.restarts > 5
+                      ? 'text-danger font-semibold'
+                      : p.restarts > 0
+                      ? 'text-warning font-semibold'
+                      : 'text-ink-muted';
+
+                  return (
+                    <tr key={p.name} className="hover:bg-bg-soft/20 transition-colors">
+                      <td className="px-4 py-3 font-mono text-xs text-ink font-semibold">{p.name}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] font-medium border ${statusClass}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${p.status === 'online' ? 'bg-success' : p.status === 'stopped' ? 'bg-ink-soft' : 'bg-danger'}`} />
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-ink-muted">{(p.cpu ?? 0).toFixed(1)}%</td>
+                      <td className="px-4 py-3 text-xs text-ink-muted">{formatBytes(p.memory ?? 0)}</td>
+                      <td className={`px-4 py-3 text-xs ${restartClass}`}>{p.restarts}</td>
+                      <td className="px-4 py-3 text-xs text-ink-muted">{formatUptime(p.uptime ?? 0)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <RenameServerDialog
         open={renameOpen}

@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
   experimental: {
-    serverComponentsExternalPackages: ['mongoose', 'bcryptjs'],
+    serverComponentsExternalPackages: ['better-sqlite3', 'bcryptjs'],
   },
 };
 

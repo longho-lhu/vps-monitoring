@@ -11,3 +11,5 @@ build
 .turbo
 out
 coverage
+vps-monitoring.db-shm
+vps-monitoring.db-wal

@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
-import { Agent } from '@/lib/models/Agent';
-import { Metric } from '@/lib/models/Metric';
+import { db } from '@/lib/db';
 import { getSessionFromCookies } from '@/lib/auth';
 import { env } from '@/lib/env';
 
@@ -14,26 +12,43 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  await connectDB();
-  /** Stable order (not by lastSeenAt) so dashboard / server list cards do not reorder every heartbeat. */
-  const agents = await Agent.find({}).sort({ hostname: 1, agentId: 1 }).lean();
-  const ids = agents.map((a) => a.agentId);
+  // Get all agents, sorted stablely by hostname and agentId
+  const agents = db.prepare('SELECT * FROM Agent ORDER BY hostname ASC, agentId ASC').all() as any[];
+  
+  // Get the latest metric for all agents in one query using a window function
+  const latestMetrics = db.prepare(`
+    WITH RankedMetrics AS (
+      SELECT *,
+             ROW_NUMBER() OVER (PARTITION BY agentId ORDER BY ts DESC) as rn
+      FROM Metric
+    )
+    SELECT *
+    FROM RankedMetrics
+    WHERE rn = 1
+  `).all() as any[];
 
-  const latest = await Metric.aggregate([
-    { $match: { agentId: { $in: ids } } },
-    { $sort: { ts: -1 } },
-    { $group: { _id: '$agentId', metric: { $first: '$$ROOT' } } },
-  ]);
-  const latestMap = new Map<string, (typeof latest)[number]['metric']>();
-  for (const item of latest) latestMap.set(item._id, item.metric);
+  const latestMap = new Map<string, any>();
+  for (const m of latestMetrics) {
+    latestMap.set(m.agentId, m);
+  }
 
   const offlineMs = env.AGENT_OFFLINE_AFTER_SECONDS * 1000;
   const now = Date.now();
 
   const data = agents.map((a) => {
     const m = latestMap.get(a.agentId);
+    
+    // SQLite timestamps are stored as ISO text strings
     const online =
       a.lastSeenAt && now - new Date(a.lastSeenAt).getTime() <= offlineMs ? true : false;
+      
+    let parsedTags: string[] = [];
+    try {
+      parsedTags = JSON.parse(a.tags || '[]');
+    } catch {
+      parsedTags = [];
+    }
+
     return {
       agentId: a.agentId,
       hostname: a.hostname,
@@ -48,7 +63,7 @@ export async function GET() {
       totalDiskBytes: a.totalDiskBytes,
       publicIp: a.publicIp,
       privateIp: a.privateIp,
-      tags: a.tags,
+      tags: parsedTags,
       online,
       lastSeenAt: a.lastSeenAt,
       registeredAt: a.registeredAt,

@@ -1,12 +1,10 @@
 import { redirect } from 'next/navigation';
-import { connectDB } from './db';
-import { User } from './models/User';
+import { db } from './db';
 
 /** DB query only — use from API routes (return 503 on failure). Do not redirect. */
 export async function querySetupComplete(): Promise<boolean> {
-  await connectDB();
-  const count = await User.countDocuments({});
-  return count > 0;
+  const row = db.prepare('SELECT COUNT(*) as count FROM User').get() as { count: number } | undefined;
+  return (row?.count ?? 0) > 0;
 }
 
 /**

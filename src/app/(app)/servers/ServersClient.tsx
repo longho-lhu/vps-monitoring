@@ -2,7 +2,8 @@
 
 import useSWR from 'swr';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRealtimeEvents } from '@/lib/useRealtimeEvents';
+import { useState, useEffect } from 'react';
 import { ChevronRight, PlusCircle, RefreshCw, Search } from 'lucide-react';
 import { StatusDot } from '@/components/StatusDot';
 import { OsBadge } from '@/components/OsBadge';
@@ -34,10 +35,20 @@ interface AgentSummary {
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function ServersClient() {
+  useRealtimeEvents();
+  const [refreshInterval, setRefreshInterval] = useState(30000);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('vps_mon_ui_refresh');
+    if (saved !== null) {
+      setRefreshInterval(Number(saved));
+    }
+  }, []);
+
   const { data, isLoading, mutate } = useSWR<{ agents: AgentSummary[] }>(
     '/api/agents',
     fetcher,
-    { refreshInterval: 5000 }
+    { refreshInterval: refreshInterval === 0 ? undefined : refreshInterval }
   );
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all');
