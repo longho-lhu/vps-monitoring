@@ -96,7 +96,31 @@ export async function POST(req: Request) {
   );
 
   // Emit event for real-time pushing
-  dbEventEmitter.emit('metric_update', { type: 'metric_update', agentId: agent.agentId });
+  dbEventEmitter.emit('metric_update', {
+    type: 'metric_update',
+    agentId: agent.agentId,
+    lastSeenAt: nowStr,
+    pm2: parsed.data.pm2,
+    latest: {
+      ts: nowStr,
+      cpuPercent: parsed.data.cpuPercent,
+      memUsedBytes: parsed.data.memUsedBytes,
+      memTotalBytes: parsed.data.memTotalBytes,
+      swapUsedBytes: parsed.data.swapUsedBytes,
+      swapTotalBytes: parsed.data.swapTotalBytes,
+      diskUsedBytes: parsed.data.diskUsedBytes,
+      diskTotalBytes: parsed.data.diskTotalBytes,
+      netRxBytes: parsed.data.netRxBytes,
+      netTxBytes: parsed.data.netTxBytes,
+      netRxBps: parsed.data.netRxBps,
+      netTxBps: parsed.data.netTxBps,
+      uptimeSeconds: parsed.data.uptimeSeconds,
+      processCount: parsed.data.processCount,
+      loadAvg1: parsed.data.loadAvg1,
+      loadAvg5: parsed.data.loadAvg5,
+      loadAvg15: parsed.data.loadAvg15,
+    },
+  });
 
   const appSettings = await getAppSettings();
   
